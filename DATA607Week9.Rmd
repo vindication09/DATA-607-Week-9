@@ -1,0 +1,137 @@
+---
+title: "DATA 607 Week 9"
+author: "Vinicio Haro"
+date: "March 26, 2018"
+output: html_document
+---
+
+The New York Times web site provides a rich set of APIs, as described here: http://developer.nytimes.com/docs
+You'll need to start by signing up for an API key.
+
+Your task is to choose one of the New York Times APIs, construct an interface in R to read in the JSON data, and transform it to an R dataframe.
+
+After registering, the following API key is obtained c90e2b1446ad4684b1d803b597c5cfea
+
+Load in the libraries we will need 
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+```
+
+
+I will select the API belonging to movie reviews. 
+```{r}
+nytimes_movie_reviews <- GET("https://api.nytimes.com/svc/movies/v2/reviews/all.json", 
+    query = list(api_key = "c90e2b1446ad4684b1d803b597c5cfea", order = "by-title", 
+        offset = 20))
+
+nytimes_movie_reviews
+```
+
+Our task is now to transform the data into an R data frame 
+```{r}
+nytimes_movies.df <- fromJSON("https://api.nytimes.com/svc/movies/v2/reviews/all.json?api_key=c90e2b1446ad4684b1d803b597c5cfea") %>% 
+    data.frame()
+
+```
+
+lets check the structure of our data frame 
+```{r}
+head(nytimes_movies.df, 5)
+```
+```{r}
+names(nytimes_movies.df)
+```
+
+By looking at the columns provided, I can see there are items here that would not provide any information worth analyzing. I don't need status, copyright, has_more, results.link or results. For the sake of the problem, we now have our data in a actionable data frame. 
+
+Lets try a different API
+Lets also try it using a slightly different method highlighted here
+http://www.storybench.org/working-with-the-new-york-times-api-in-r/
+```{r}
+NYTIMES_KEY="c90e2b1446ad4684b1d803b597c5cfea"
+```
+
+There is actually a library that interacts with the NY times API
+install.packages("devtools")
+devtools::install_github("mkearney/nytimes")
+```{r}
+#install.packages("devtools")
+#devtools::install_github("mkearney/nytimes")
+library(nytimes)
+```
+
+Lets use the article search API
+```{r}
+article_search <- fromJSON("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=mueller&api-key=c90e2b1446ad4684b1d803b597c5cfea")
+article_search
+```
+
+Now lets convert into a dataframe
+```{r error=TRUE}
+article_search <- fromJSON("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=mueller&api-key=c90e2b1446ad4684b1d803b597c5cfea", flatten = TRUE) %>% data.frame()
+```
+
+```{r}
+head(article_search, 5)
+```
+
+```{r}
+names(article_search)
+```
+
+This sort of data is prime for performing tf-idf or clustering via k means. 
+
+We can also query results from multiple pages at once. This is useful if we want to visualize things such as distribution of content types. We will follow the guidelines in that linked tutorial to go through this process. 
+
+Lets define something to search and specify a range 
+Lets look at any mention of Bill Clinton from 1993 to 1994
+```{r}
+# Let's set some parameters
+term <- "bill+clinton" # Need to use + to string together separate words
+begin_date <- "19931108"
+end_date <- "19940101"
+```
+
+We defined our terms so we can create a full query based on these terms
+```{r}
+baseurl <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",term,
+                  "&begin_date=",begin_date,"&end_date=",end_date,
+                  "&facet_filter=true&api-key=",NYTIMES_KEY, sep="")
+```
+
+Run the query 
+```{r error=TRUE}
+initialQuery <- fromJSON(baseurl)
+maxPages <- round((initialQuery$response$meta$hits[1] / 10)-1) 
+```
+
+We only look at 10 pages at a time, but the following loop lets us bypass the limitation. We add a sys.sleep in order to avoid being identifed as a bot. 
+```{r error=TRUE}
+pages <- list()
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame() 
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch 
+  Sys.sleep(1) 
+}
+```
+
+We collected 56 pages. We can paste all the pages together 
+```{r}
+allNYTSearch <- rbind_pages(pages)
+```
+
+We can visualize articles on Bill Clinton by content type 
+```{r}
+# Visualize coverage by section
+library(ggplot2)
+allNYTSearch %>% 
+  group_by(response.docs.type_of_material) %>%
+  summarize(count=n()) %>%
+  mutate(percent = (count / sum(count))*100) %>%
+  ggplot() +
+  geom_bar(aes(y=percent, x=response.docs.type_of_material, fill=response.docs.type_of_material), stat = "identity") + coord_flip()
+```
+
